@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2023 Thomas Akehurst
+ * Copyright (C) 2016-2024 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,10 +32,16 @@ import com.github.tomakehurst.wiremock.common.*;
 import com.github.tomakehurst.wiremock.testsupport.ServeEventChecks;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 public class MatchesJsonPathPatternTest {
+
+  @BeforeEach
+  public void init() {
+    RequestCache.disable();
+  }
 
   @Test
   public void matchesABasicJsonPathWhenTheExpectedElementIsPresent() {
@@ -55,7 +61,7 @@ public class MatchesJsonPathPatternTest {
 
   @Test
   public void matchesOnJsonPathsWithFilters() {
-    StringValuePattern pattern = WireMock.matchingJsonPath("$.numbers[?(@.number == '2')]");
+    StringValuePattern pattern = WireMock.matchingJsonPath("$.numbers[?(@.number == 2)]");
 
     assertTrue(
         pattern.match("{ \"numbers\": [ {\"number\": 1}, {\"number\": 2} ]}").isExactMatch(),
@@ -63,6 +69,30 @@ public class MatchesJsonPathPatternTest {
     assertFalse(
         pattern.match("{ \"numbers\": [{\"number\": 7} ]}").isExactMatch(),
         "Expected no match when JSON attribute is absent");
+  }
+
+  @Test
+  public void matchesOnJsonPathsWithDecimalFilters() {
+    StringValuePattern pattern = WireMock.matchingJsonPath("$.numbers[?(@.decimal == '2.3')]");
+
+    assertTrue(
+        pattern.match("{ \"numbers\": [ {\"number\": 1}, {\"decimal\": 2.3} ]}").isExactMatch(),
+        "Expected match when JSON attribute is present and the same as the filter");
+    assertTrue(
+        pattern.match("{ \"numbers\": [ {\"number\": 1}, {\"decimal\": 2.3000} ]}").isExactMatch(),
+        "Expected match when JSON attribute is present, the same as the filter but with trailing zeros");
+  }
+
+  @Test
+  public void matchesOnJsonPathsWithDecimalFiltersWithTrailingZeros() {
+    StringValuePattern pattern = WireMock.matchingJsonPath("$.numbers[?(@.decimal == '2.3000')]");
+
+    assertTrue(
+        pattern.match("{ \"numbers\": [ {\"number\": 1}, {\"decimal\": 2.3} ]}").isExactMatch(),
+        "Expected match when JSON attribute is present, the same as the filter but without trailing zeros");
+    assertTrue(
+        pattern.match("{ \"numbers\": [ {\"number\": 1}, {\"decimal\": 2.3000} ]}").isExactMatch(),
+        "Expected match when JSON attribute is present and the same as the filter");
   }
 
   @Test
@@ -100,17 +130,15 @@ public class MatchesJsonPathPatternTest {
   }
 
   @Test
-  public void providesSensibleNotificationWhenJsonMatchFailsDueToInvalidJson() {
-    Notifier notifier = setMockNotifier();
-
+  public void providesEventMessageWhenJsonMatchFailsDueToInvalidJson() {
     StringValuePattern pattern = WireMock.matchingJsonPath("$.something");
     MatchResult match = pattern.match("Not a JSON document");
 
     assertFalse(match.isExactMatch(), "Expected the match to fail");
-    checkWarningMessageAndEvent(
-        notifier,
+    checkMessage(
         match,
-        "Warning: JSON path expression '$.something' failed to match document 'Not a JSON document' because of error 'Expected to find an object with property ['something'] in path $ but found 'java.lang.String'. This is not a json object according to the JsonProvider: 'com.jayway.jsonpath.spi.json.JsonSmartJsonProvider'.'");
+        WARNING,
+        "Warning: JSON path expression failed to match document 'Not a JSON document' because of error 'Expected to find an object with property ['something'] in path $ but found 'java.lang.String'. This is not a json object according to the JsonProvider: 'com.jayway.jsonpath.spi.json.JsonSmartJsonProvider'.'");
   }
 
   private static void checkWarningMessageAndEvent(
@@ -120,17 +148,15 @@ public class MatchesJsonPathPatternTest {
   }
 
   @Test
-  public void providesSensibleNotificationWhenJsonMatchFailsDueToMissingAttributeJson() {
-    Notifier notifier = setMockNotifier();
-
+  public void providesEventMessageWhenJsonMatchFailsDueToMissingAttributeJson() {
     StringValuePattern pattern = WireMock.matchingJsonPath("$.something");
     MatchResult matchResult = pattern.match("{ \"nothing\": 1 }");
 
     assertFalse(matchResult.isExactMatch(), "Expected the match to fail");
-    checkWarningMessageAndEvent(
-        notifier,
+    checkMessage(
         matchResult,
-        "Warning: JSON path expression '$.something' failed to match document '{ \"nothing\": 1 }' because of error 'No results for path: $['something']'");
+        WARNING,
+        "Warning: JSON path expression failed to match document '{ \"nothing\": 1 }' because of error 'No results for path: $['something']'");
   }
 
   @Test
@@ -144,19 +170,19 @@ public class MatchesJsonPathPatternTest {
     checkWarningMessageAndEvent(
         notifier,
         matchResult,
-        "Warning: JSON path expression '$.something' failed to match document '<xml-stuff />' because it's not JSON but probably XML");
+        "Warning: JSON path expression failed to match document '<xml-stuff />' because it's not JSON but probably XML");
   }
 
   @Test
   void subEventsReturnedBySubMatchersAreAddedToServeEvent() {
     StringValuePattern pattern =
         WireMock.matchingJsonPath("$.something", WireMock.equalToJson("{}"));
-    MatchResult matchResult = pattern.match("{ \"something\": \"{ \\\"bad:\" }");
+    MatchResult matchResult = pattern.match("{ \"something\": \"{ \\\"bad\\\": }\" }");
 
     assertFalse(matchResult.isExactMatch(), "Expected the match to fail");
     ServeEventChecks.checkJsonError(
         matchResult,
-        "Unexpected end-of-input in field name\n at [Source: (String)\"{ \"bad:\"; line: 1, column: 8]");
+        "Unexpected character ('}' (code 125)): expected a valid value (JSON String, Number, Array, Object or token 'null', 'true' or 'false')\n at [Source: (String)\"{ \"bad\": }\"; line: 1, column: 10]");
   }
 
   @Test
@@ -164,7 +190,7 @@ public class MatchesJsonPathPatternTest {
     String json =
         "{\n" + "  \"RequestDetail\" : {\n" + "    \"ClientTag\" : \"test111\"\n" + "  }\n" + "}";
 
-    StringValuePattern pattern = WireMock.matchingJsonPath("$.RequestDetail.?(@=='test222')");
+    StringValuePattern pattern = WireMock.matchingJsonPath("$.RequestDetail.[?(@=='test222')]");
     MatchResult match = pattern.match(json);
     assertFalse(match.isExactMatch());
   }
@@ -380,16 +406,15 @@ public class MatchesJsonPathPatternTest {
   public void throwsSensibleErrorOnDeserialisationWhenPatternIsBadlyFormedWithMissingExpression() {
     assertThrows(
         JsonException.class,
-        () -> {
-          Json.read(
-              "{                                      \n"
-                  + "    \"matchesJsonPath\": {              \n"
-                  + "        \"express\": \"$..thing\",      \n"
-                  + "        \"equalTo\": \"the value\"      \n"
-                  + "    }                                   \n"
-                  + "}",
-              StringValuePattern.class);
-        });
+        () ->
+            Json.read(
+                "{                                      \n"
+                    + "    \"matchesJsonPath\": {              \n"
+                    + "        \"express\": \"$..thing\",      \n"
+                    + "        \"equalTo\": \"the value\"      \n"
+                    + "    }                                   \n"
+                    + "}",
+                StringValuePattern.class));
   }
 
   @Test
@@ -397,16 +422,15 @@ public class MatchesJsonPathPatternTest {
       throwsSensibleErrorOnDeserialisationWhenPatternIsBadlyFormedWithBadValuePatternName() {
     assertThrows(
         JsonException.class,
-        () -> {
-          Json.read(
-              "{                                      \n"
-                  + "    \"matchesJsonPath\": {              \n"
-                  + "        \"expression\": \"$..thing\",   \n"
-                  + "        \"badOperator\": \"the value\"  \n"
-                  + "    }                                   \n"
-                  + "}",
-              StringValuePattern.class);
-        });
+        () ->
+            Json.read(
+                "{                                      \n"
+                    + "    \"matchesJsonPath\": {              \n"
+                    + "        \"expression\": \"$..thing\",   \n"
+                    + "        \"badOperator\": \"the value\"  \n"
+                    + "    }                                   \n"
+                    + "}",
+                StringValuePattern.class));
   }
 
   @Test

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2023 Thomas Akehurst
+ * Copyright (C) 2017-2024 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,13 @@
 package com.github.tomakehurst.wiremock;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
+import static com.github.tomakehurst.wiremock.common.ContentTypes.CONTENT_TYPE;
 import static com.github.tomakehurst.wiremock.common.Gzip.gzip;
-import static com.github.tomakehurst.wiremock.common.Strings.DEFAULT_CHARSET;
+import static com.github.tomakehurst.wiremock.common.Strings.rightPad;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
 import static com.github.tomakehurst.wiremock.testsupport.TestHttpHeader.withHeader;
 import static com.github.tomakehurst.wiremock.testsupport.WireMatchers.findMappingWithUrl;
-import static com.google.common.net.HttpHeaders.CONTENT_TYPE;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.apache.hc.core5.http.ContentType.APPLICATION_OCTET_STREAM;
 import static org.apache.hc.core5.http.ContentType.TEXT_PLAIN;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -30,7 +31,6 @@ import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.github.tomakehurst.wiremock.client.WireMock;
-import com.github.tomakehurst.wiremock.common.InvalidInputException;
 import com.github.tomakehurst.wiremock.matching.EqualToJsonPattern;
 import com.github.tomakehurst.wiremock.recording.NotRecordingException;
 import com.github.tomakehurst.wiremock.recording.RecordingStatus;
@@ -39,7 +39,6 @@ import com.github.tomakehurst.wiremock.stubbing.StubMapping;
 import com.github.tomakehurst.wiremock.testsupport.WireMockTestClient;
 import java.io.File;
 import java.util.List;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.hc.client5.http.entity.GzipCompressingEntity;
 import org.apache.hc.core5.http.HttpEntity;
 import org.apache.hc.core5.http.io.entity.StringEntity;
@@ -62,7 +61,11 @@ public class RecordingDslAcceptanceTest extends AcceptanceTestBase {
     fileRoot = setupTempFileRoot();
     proxyingService =
         new WireMockServer(
-            wireMockConfig().dynamicPort().withRootDirectory(fileRoot.getAbsolutePath()));
+            wireMockConfig()
+                .dynamicPort()
+                .withRootDirectory(fileRoot.getAbsolutePath())
+                .enableBrowserProxying(true)
+                .trustAllProxyTargets(true));
     proxyingService.start();
 
     targetService = wireMockServer;
@@ -290,7 +293,7 @@ public class RecordingDslAcceptanceTest extends AcceptanceTestBase {
   public void recordsIntoPlainBinaryWhenResponseIsGZipped() {
     proxyingService.startRecording(targetBaseUrl);
 
-    byte[] originalBody = "sdkfnslkdjfsjdf".getBytes(DEFAULT_CHARSET);
+    byte[] originalBody = "sdkfnslkdjfsjdf".getBytes(UTF_8);
     byte[] gzippedBody = gzip(originalBody);
     targetService.stubFor(
         get("/gzipped-response")
@@ -334,7 +337,7 @@ public class RecordingDslAcceptanceTest extends AcceptanceTestBase {
             .willReturn(
                 aResponse()
                     .withHeader(CONTENT_TYPE, "text/plain")
-                    .withBody(StringUtils.rightPad("", 10241, 'a'))));
+                    .withBody(rightPad("", 10241, 'a'))));
 
     proxyingService.startRecording(recordSpec().forTarget(targetBaseUrl));
 
@@ -356,7 +359,7 @@ public class RecordingDslAcceptanceTest extends AcceptanceTestBase {
             .willReturn(
                 aResponse()
                     .withHeader(CONTENT_TYPE, "text/plain")
-                    .withBody(StringUtils.rightPad("", 10239, 'a'))));
+                    .withBody(rightPad("", 10239, 'a'))));
 
     proxyingService.startRecording(recordSpec().forTarget(targetBaseUrl));
 
@@ -366,6 +369,37 @@ public class RecordingDslAcceptanceTest extends AcceptanceTestBase {
     String bodyFileName = mappings.get(0).getResponse().getBodyFileName();
 
     assertThat(bodyFileName, nullValue());
+  }
+
+  @Test
+  void recordsViaBrowserProxyingWhenNoTargetUrlSpecified() {
+    targetService.stubFor(get(urlPathMatching("/record-this/.*")).willReturn(ok("Via proxy")));
+
+    startRecording();
+
+    String url = targetService.baseUrl() + "/record-this/123";
+    client.getViaProxy(url, proxyingService.port());
+
+    List<StubMapping> mappings = stopRecording().getStubMappings();
+
+    StubMapping mapping = mappings.get(0);
+    assertThat(mapping.getRequest().getUrl(), is("/record-this/123"));
+  }
+
+  @Test
+  void whenRepeatsAsScenariosIsEnabledResponsesAreReturnedInRecordedOrder() {
+    proxyingService.startRecording(targetService.baseUrl());
+    targetService.stubFor(get("/sequence").willReturn(ok("1")));
+    client.get("/sequence");
+    targetService.stubFor(get("/sequence").willReturn(ok("2")));
+    client.get("/sequence");
+    targetService.stubFor(get("/sequence").willReturn(ok("3")));
+    client.get("/sequence");
+    proxyingService.stopRecording();
+
+    assertThat(client.get("/sequence").content(), is("1"));
+    assertThat(client.get("/sequence").content(), is("2"));
+    assertThat(client.get("/sequence").content(), is("3"));
   }
 
   @Test
@@ -381,23 +415,5 @@ public class RecordingDslAcceptanceTest extends AcceptanceTestBase {
   @Test
   public void throwsAnErrorIfAttemptingToStopViaDirectDslWhenNotRecording() {
     assertThrows(NotRecordingException.class, proxyingService::stopRecording);
-  }
-
-  @Test
-  public void throwsValidationErrorWhenAttemptingToStartRecordingViaStaticDslWithNoTargetUrl() {
-    assertThrows(
-        InvalidInputException.class,
-        () -> {
-          startRecording(recordSpec());
-        });
-  }
-
-  @Test
-  public void throwsValidationErrorWhenAttemptingToStartRecordingViaDirectDslWithNoTargetUrl() {
-    assertThrows(
-        InvalidInputException.class,
-        () -> {
-          proxyingService.startRecording(recordSpec());
-        });
   }
 }

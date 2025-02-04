@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Thomas Akehurst
+ * Copyright (C) 2023-2024 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,23 +18,32 @@ package com.github.tomakehurst.wiremock.extension;
 import static java.util.Arrays.asList;
 
 import java.util.*;
+import java.util.stream.Collectors;
+import org.wiremock.webhooks.Webhooks;
 
 public class ExtensionDeclarations {
 
   private final List<String> classNames;
   private final List<Class<? extends Extension>> classes;
   private final Map<String, Extension> instances;
+  private final List<Class<? extends ExtensionFactory>> factoryClasses;
   private final List<ExtensionFactory> factories;
+  private static final String WEBHOOK_MESSAGE =
+      "Passing webhooks in extensions is no longer required and"
+          + " may lead to compatibility issues in future";
 
   public ExtensionDeclarations() {
     this.classNames = new ArrayList<>();
     this.classes = new ArrayList<>();
     this.instances = new LinkedHashMap<>();
+    this.factoryClasses = new ArrayList<>();
     this.factories = new ArrayList<>();
   }
 
   public void add(String... classNames) {
-    this.classNames.addAll(asList(classNames));
+    List<String> processedClassNames =
+        Arrays.stream(classNames).filter(this::removeWebhook).collect(Collectors.toList());
+    this.classNames.addAll(processedClassNames);
   }
 
   public void add(Extension... extensionInstances) {
@@ -42,11 +51,17 @@ public class ExtensionDeclarations {
   }
 
   public void add(Class<? extends Extension>... classes) {
-    this.classes.addAll(asList(classes));
+    List<Class<? extends Extension>> processedClasses =
+        Arrays.stream(classes).filter(c -> removeWebhook(c.getName())).collect(Collectors.toList());
+    this.classes.addAll(processedClasses);
   }
 
   public void add(ExtensionFactory... factories) {
     this.factories.addAll(asList(factories));
+  }
+
+  public void addFactories(Class<? extends ExtensionFactory>... factoryClasses) {
+    this.factoryClasses.addAll(asList(factoryClasses));
   }
 
   public List<String> getClassNames() {
@@ -63,5 +78,17 @@ public class ExtensionDeclarations {
 
   public List<ExtensionFactory> getFactories() {
     return factories;
+  }
+
+  public List<Class<? extends ExtensionFactory>> getFactoryClasses() {
+    return factoryClasses;
+  }
+
+  private boolean removeWebhook(String className) {
+    if (className.equals(Webhooks.class.getName())) {
+      System.out.println(WEBHOOK_MESSAGE);
+      return false;
+    }
+    return true;
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Thomas Akehurst
+ * Copyright (C) 2023-2024 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,8 +15,7 @@
  */
 package com.github.tomakehurst.wiremock;
 
-import static com.github.tomakehurst.wiremock.client.WireMock.get;
-import static com.github.tomakehurst.wiremock.client.WireMock.noContent;
+import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options;
 import static com.github.tomakehurst.wiremock.http.RequestMethod.GET;
 import static com.github.tomakehurst.wiremock.testsupport.TestFiles.defaultTestFilesRoot;
@@ -26,15 +25,17 @@ import static org.hamcrest.Matchers.endsWith;
 import static org.hamcrest.Matchers.is;
 
 import com.github.tomakehurst.wiremock.admin.Router;
+import com.github.tomakehurst.wiremock.client.ResponseDefinitionBuilder;
 import com.github.tomakehurst.wiremock.common.FileSource;
 import com.github.tomakehurst.wiremock.common.Strings;
 import com.github.tomakehurst.wiremock.core.Admin;
 import com.github.tomakehurst.wiremock.core.Options;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
-import com.github.tomakehurst.wiremock.extension.AdminApiExtension;
-import com.github.tomakehurst.wiremock.extension.Extensions;
+import com.github.tomakehurst.wiremock.extension.*;
 import com.github.tomakehurst.wiremock.http.ResponseDefinition;
 import com.github.tomakehurst.wiremock.store.Stores;
+import com.github.tomakehurst.wiremock.stubbing.ServeEvent;
+import com.github.tomakehurst.wiremock.testsupport.WireMockResponse;
 import com.github.tomakehurst.wiremock.testsupport.WireMockTestClient;
 import java.io.File;
 import java.util.List;
@@ -62,6 +63,7 @@ public class ExtensionFactoryTest {
             .withRootDirectory(defaultTestFilesRoot())
             .stubCorsEnabled(true)
             .templatingEnabled(false)
+            .extensionScanningEnabled(true)
             .extensions(
                 services ->
                     List.of(
@@ -84,13 +86,18 @@ public class ExtensionFactoryTest {
     assertThat(content, jsonPartEquals("requestCount", 2));
     assertThat(content, jsonPartEquals("stubCorsEnabled", true));
     assertThat(
-        content, jsonPartEquals("extensionCount", 3)); // Includes the two service loaded extensions
+        content,
+        jsonPartEquals("extensionCount", 5)); // Includes the three service loaded extensions
   }
 
   @Test
-  void usesExtensionFactoryLoadedViaServiceLoader() {
+  void usesExtensionFactoryLoadedViaServiceLoaderWhenEnabled() {
     initialiseWireMockServer(
-        options().dynamicPort().withRootDirectory(defaultTestFilesRoot()).templatingEnabled(false));
+        options()
+            .dynamicPort()
+            .extensionScanningEnabled(true)
+            .withRootDirectory(defaultTestFilesRoot())
+            .templatingEnabled(false));
 
     wm.stubFor(get("/transform-this").willReturn(noContent().withTransformers("loader-test")));
 
@@ -100,14 +107,43 @@ public class ExtensionFactoryTest {
   }
 
   @Test
-  void usesExtensionInstanceLoadedViaServiceLoader() {
+  void doesNotUseExtensionFactoryLoadedViaServiceLoaderByDefault() {
     initialiseWireMockServer(
         options().dynamicPort().withRootDirectory(defaultTestFilesRoot()).templatingEnabled(false));
+
+    wm.stubFor(get("/transform-this").willReturn(noContent().withTransformers("loader-test")));
+
+    client.get("/just-count-this");
+
+    assertThat(client.get("/transform-this").statusCode(), is(204));
+  }
+
+  @Test
+  void usesExtensionInstanceLoadedViaServiceLoader() {
+    initialiseWireMockServer(
+        options()
+            .dynamicPort()
+            .extensionScanningEnabled(true)
+            .withRootDirectory(defaultTestFilesRoot())
+            .templatingEnabled(false));
 
     wm.stubFor(
         get("/transform-this").willReturn(noContent().withTransformers("instance-loader-test")));
 
     assertThat(client.get("/transform-this").content(), is("Expected stuff"));
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void usesExtensionFactoryLoadedAsClass() {
+    initialiseWireMockServer(
+        options().dynamicPort().extensionFactories(HeaderAddingExtensionFactory.class));
+
+    wm.stubFor(any(anyUrl()).willReturn(ok()));
+
+    WireMockResponse response = client.get("/test");
+
+    assertThat(response.firstHeader("added-header"), is("present"));
   }
 
   private void initialiseWireMockServer(WireMockConfiguration options) {
@@ -156,6 +192,32 @@ public class ExtensionFactoryTest {
                     "requestCount", requestCount,
                     "stubCorsEnabled", options.getStubCorsEnabled(),
                     "extensionCount", extensions.getCount()));
+          });
+    }
+  }
+
+  public static class HeaderAddingExtensionFactory implements ExtensionFactory {
+
+    @Override
+    public List<Extension> create(WireMockServices services) {
+      return List.of(
+          new ResponseDefinitionTransformerV2() {
+            @Override
+            public ResponseDefinition transform(ServeEvent serveEvent) {
+              return ResponseDefinitionBuilder.like(serveEvent.getResponseDefinition())
+                  .withHeader("added-header", "present")
+                  .build();
+            }
+
+            @Override
+            public boolean applyGlobally() {
+              return true;
+            }
+
+            @Override
+            public String getName() {
+              return "add-header";
+            }
           });
     }
   }

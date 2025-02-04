@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2023 Thomas Akehurst
+ * Copyright (C) 2012-2024 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,6 @@
 package com.github.tomakehurst.wiremock.core;
 
 import static com.github.tomakehurst.wiremock.common.ParameterUtils.getFirstNonNull;
-import static com.github.tomakehurst.wiremock.stubbing.ServeEvent.NOT_MATCHED;
-import static com.github.tomakehurst.wiremock.stubbing.ServeEvent.TO_LOGGED_REQUEST;
-import static com.google.common.collect.Iterables.contains;
 
 import com.github.tomakehurst.wiremock.admin.AdminRoutes;
 import com.github.tomakehurst.wiremock.admin.LimitAndOffsetPaginator;
@@ -31,6 +28,7 @@ import com.github.tomakehurst.wiremock.extension.requestfilter.RequestFilter;
 import com.github.tomakehurst.wiremock.extension.requestfilter.RequestFilterV2;
 import com.github.tomakehurst.wiremock.global.GlobalSettings;
 import com.github.tomakehurst.wiremock.http.*;
+import com.github.tomakehurst.wiremock.http.client.HttpClient;
 import com.github.tomakehurst.wiremock.matching.RequestMatcherExtension;
 import com.github.tomakehurst.wiremock.matching.RequestPattern;
 import com.github.tomakehurst.wiremock.matching.StringValuePattern;
@@ -41,20 +39,19 @@ import com.github.tomakehurst.wiremock.store.SettingsStore;
 import com.github.tomakehurst.wiremock.store.Stores;
 import com.github.tomakehurst.wiremock.stubbing.*;
 import com.github.tomakehurst.wiremock.verification.*;
-import com.google.common.collect.ImmutableList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import com.jayway.jsonpath.JsonPathException;
+import com.jayway.jsonpath.spi.cache.CacheProvider;
+import com.jayway.jsonpath.spi.cache.NOOPCache;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
-import org.apache.commons.lang3.mutable.MutableBoolean;
 
 public class WireMockApp implements StubServer, Admin {
 
   public static final String FILES_ROOT = "__files";
   public static final String ADMIN_CONTEXT_ROOT = "/__admin";
   public static final String MAPPINGS_ROOT = "mappings";
-  private static final MutableBoolean FACTORIES_LOADING_OPTIMIZED = new MutableBoolean(false);
+  private static final AtomicBoolean FACTORIES_LOADING_OPTIMIZED = new AtomicBoolean(false);
 
   private final Stores stores;
   private final Scenarios scenarios;
@@ -68,15 +65,27 @@ public class WireMockApp implements StubServer, Admin {
   private final NearMissCalculator nearMissCalculator;
   private final Recorder recorder;
   private final List<GlobalSettingsListener> globalSettingsListeners;
+  private final Map<String, MappingsLoaderExtension> mappingsLoaderExtensions;
+  private final Map<String, ServeEventListener> serveEventListeners;
 
   private Options options;
 
   private Extensions extensions;
 
   public WireMockApp(Options options, Container container) {
-    if (!options.getDisableOptimizeXmlFactoriesLoading() && FACTORIES_LOADING_OPTIMIZED.isFalse()) {
+    if (!options.getDisableOptimizeXmlFactoriesLoading()
+        && Boolean.FALSE.equals(FACTORIES_LOADING_OPTIMIZED.get())) {
       Xml.optimizeFactoriesLoading();
-      FACTORIES_LOADING_OPTIMIZED.setTrue();
+      FACTORIES_LOADING_OPTIMIZED.set(true);
+    }
+
+    try {
+      // Disabling JsonPath's cache due to
+      // https://github.com/json-path/JsonPath/issues/975#issuecomment-1867293053 and the fact that
+      // we're now doing our own caching.
+      CacheProvider.setCache(new NOOPCache());
+    } catch (JsonPathException ignored) {
+      // May fail on subsequent runs, but this doesn't matter
     }
 
     this.options = options;
@@ -101,6 +110,8 @@ public class WireMockApp implements StubServer, Admin {
     Map<String, RequestMatcherExtension> customMatchers =
         extensions.ofType(RequestMatcherExtension.class);
 
+    serveEventListeners = extensions.ofType(ServeEventListener.class);
+
     requestJournal =
         options.requestJournalDisabled()
             ? new DisabledRequestJournal()
@@ -118,20 +129,24 @@ public class WireMockApp implements StubServer, Admin {
             extensions.ofType(ResponseDefinitionTransformer.class),
             extensions.ofType(ResponseDefinitionTransformerV2.class),
             stores.getFilesBlobStore(),
-            ImmutableList.copyOf(extensions.ofType(StubLifecycleListener.class).values()));
-    nearMissCalculator = new NearMissCalculator(stubMappings, requestJournal, scenarios);
+            List.copyOf(extensions.ofType(StubLifecycleListener.class).values()),
+            serveEventListeners);
+    nearMissCalculator =
+        new NearMissCalculator(stubMappings, requestJournal, scenarios, customMatchers);
     recorder =
         new Recorder(this, extensions, stores.getFilesBlobStore(), stores.getRecorderStateStore());
-    globalSettingsListeners =
-        ImmutableList.copyOf(extensions.ofType(GlobalSettingsListener.class).values());
+    globalSettingsListeners = List.copyOf(extensions.ofType(GlobalSettingsListener.class).values());
+    this.mappingsLoaderExtensions = extensions.ofType(MappingsLoaderExtension.class);
 
     this.container = container;
+    extensions.startAll();
     loadDefaultMappings();
   }
 
   public WireMockApp(
       boolean browserProxyingEnabled,
       MappingsLoader defaultMappingsLoader,
+      Map<String, MappingsLoaderExtension> mappingsLoaderExtensions,
       MappingsSaver mappingsSaver,
       boolean requestJournalDisabled,
       Integer maxRequestJournalEntries,
@@ -145,6 +160,7 @@ public class WireMockApp implements StubServer, Admin {
 
     this.browserProxyingEnabled = browserProxyingEnabled;
     this.defaultMappingsLoader = defaultMappingsLoader;
+    this.mappingsLoaderExtensions = mappingsLoaderExtensions;
     this.mappingsSaver = mappingsSaver;
     this.settingsStore = stores.getSettingsStore();
     requestJournal =
@@ -153,6 +169,9 @@ public class WireMockApp implements StubServer, Admin {
             : new StoreBackedRequestJournal(
                 maxRequestJournalEntries, requestMatchers, stores.getRequestJournalStore());
     scenarios = new InMemoryScenarios(stores.getScenariosStore());
+
+    serveEventListeners = Collections.emptyMap();
+
     stubMappings =
         new StoreBackedStubMappings(
             stores.getStubStore(),
@@ -161,9 +180,11 @@ public class WireMockApp implements StubServer, Admin {
             transformers,
             v2transformers,
             stores.getFilesBlobStore(),
-            Collections.emptyList());
+            Collections.emptyList(),
+            serveEventListeners);
     this.container = container;
-    nearMissCalculator = new NearMissCalculator(stubMappings, requestJournal, scenarios);
+    nearMissCalculator =
+        new NearMissCalculator(stubMappings, requestJournal, scenarios, requestMatchers);
     recorder =
         new Recorder(this, extensions, stores.getFilesBlobStore(), stores.getRecorderStateStore());
     globalSettingsListeners = Collections.emptyList();
@@ -186,27 +207,42 @@ public class WireMockApp implements StubServer, Admin {
 
   public StubRequestHandler buildStubRequestHandler() {
     Map<String, PostServeAction> postServeActions = extensions.ofType(PostServeAction.class);
-    Map<String, ServeEventListener> serveEventListeners =
-        extensions.ofType(ServeEventListener.class);
     BrowserProxySettings browserProxySettings = options.browserProxySettings();
+
+    final com.github.tomakehurst.wiremock.http.client.HttpClientFactory httpClientFactory =
+        extensions
+            .ofType(com.github.tomakehurst.wiremock.http.client.HttpClientFactory.class)
+            .values()
+            .stream()
+            .findFirst()
+            .orElse(options.httpClientFactory());
+
+    final HttpClient reverseProxyClient =
+        httpClientFactory.buildHttpClient(options, true, Collections.emptyList(), true);
+    final HttpClient forwardProxyClient =
+        httpClientFactory.buildHttpClient(
+            options,
+            browserProxySettings.trustAllProxyTargets(),
+            browserProxySettings.trustAllProxyTargets()
+                ? Collections.emptyList()
+                : browserProxySettings.trustedProxyTargets(),
+            false);
+
     return new StubRequestHandler(
         this,
         new StubResponseRenderer(
             options.getStores().getFilesBlobStore(),
             settingsStore,
             new ProxyResponseRenderer(
-                options.proxyVia(),
-                options.httpsSettings().trustStore(),
                 options.shouldPreserveHostHeader(),
                 options.proxyHostHeader(),
                 settingsStore,
-                browserProxySettings.trustAllProxyTargets(),
-                browserProxySettings.trustedProxyTargets(),
                 options.getStubCorsEnabled(),
-                options.getProxyTargetRules(),
-                options.proxyTimeout()),
-            ImmutableList.copyOf(extensions.ofType(ResponseTransformer.class).values()),
-            ImmutableList.copyOf(extensions.ofType(ResponseTransformerV2.class).values())),
+                options.getSupportedProxyEncodings(),
+                reverseProxyClient,
+                forwardProxyClient),
+            List.copyOf(extensions.ofType(ResponseTransformer.class).values()),
+            List.copyOf(extensions.ofType(ResponseTransformerV2.class).values())),
         this,
         postServeActions,
         serveEventListeners,
@@ -244,6 +280,8 @@ public class WireMockApp implements StubServer, Admin {
 
   private void loadDefaultMappings() {
     loadMappingsUsing(defaultMappingsLoader);
+    if (mappingsLoaderExtensions != null)
+      mappingsLoaderExtensions.values().forEach(e -> loadMappingsUsing(e));
   }
 
   public void loadMappingsUsing(final MappingsLoader mappingsLoader) {
@@ -254,13 +292,12 @@ public class WireMockApp implements StubServer, Admin {
   public ServeEvent serveStubFor(ServeEvent initialServeEvent) {
     ServeEvent serveEvent = stubMappings.serveFor(initialServeEvent);
 
-    if (serveEvent.isNoExactMatch()) {
-      if (browserProxyingEnabled
-          && serveEvent.getRequest().isBrowserProxyRequest()
-          && getGlobalSettings().getSettings().getProxyPassThrough()) {
-        return ServeEvent.ofUnmatched(
-            serveEvent.getRequest(), ResponseDefinition.browserProxy(serveEvent.getRequest()));
-      }
+    if (serveEvent.isNoExactMatch()
+        && browserProxyingEnabled
+        && serveEvent.getRequest().isBrowserProxyRequest()
+        && getGlobalSettings().getSettings().getProxyPassThrough()) {
+      return ServeEvent.ofUnmatched(
+          serveEvent.getRequest(), ResponseDefinition.browserProxy(serveEvent.getRequest()));
     }
 
     return serveEvent;
@@ -397,8 +434,8 @@ public class WireMockApp implements StubServer, Admin {
     try {
       List<LoggedRequest> requests =
           requestJournal.getAllServeEvents().stream()
-              .filter(NOT_MATCHED)
-              .map(TO_LOGGED_REQUEST)
+              .filter(ServeEvent::isNoExactMatch)
+              .map(ServeEvent::getRequest)
               .collect(Collectors.toList());
       return FindRequestsResult.withRequests(requests);
     } catch (RequestJournalDisabledException e) {
@@ -425,17 +462,17 @@ public class WireMockApp implements StubServer, Admin {
 
   @Override
   public FindNearMissesResult findNearMissesForUnmatchedRequests() {
-    ImmutableList.Builder<NearMiss> listBuilder = ImmutableList.builder();
+    List<NearMiss> nearMisses = new ArrayList<>();
     List<ServeEvent> unmatchedServeEvents =
         requestJournal.getAllServeEvents().stream()
             .filter(ServeEvent::isNoExactMatch)
             .collect(Collectors.toList());
 
     for (ServeEvent serveEvent : unmatchedServeEvents) {
-      listBuilder.addAll(nearMissCalculator.findNearestTo(serveEvent.getRequest()));
+      nearMisses.addAll(nearMissCalculator.findNearestTo(serveEvent.getRequest()));
     }
 
-    return new FindNearMissesResult(listBuilder.build());
+    return new FindNearMissesResult(nearMisses);
   }
 
   @Override
@@ -492,8 +529,13 @@ public class WireMockApp implements StubServer, Admin {
     return options;
   }
 
+  public Extensions getExtensions() {
+    return extensions;
+  }
+
   @Override
   public void shutdownServer() {
+    extensions.stopAll();
     stores.stop();
     container.shutdown();
   }
@@ -568,12 +610,16 @@ public class WireMockApp implements StubServer, Admin {
     }
 
     if (importOptions.getDeleteAllNotInImport()) {
-      Iterable<UUID> ids = mappings.stream().map(StubMapping::getId).collect(Collectors.toList());
+      List<UUID> ids = mappings.stream().map(StubMapping::getId).collect(Collectors.toList());
       for (StubMapping mapping : listAllStubMappings().getMappings()) {
-        if (!contains(ids, mapping.getId())) {
+        if (!ids.contains(mapping.getId())) {
           removeStubMapping(mapping);
         }
       }
     }
+  }
+
+  public Set<String> getLoadedExtensionNames() {
+    return extensions.getAllExtensionNames();
   }
 }

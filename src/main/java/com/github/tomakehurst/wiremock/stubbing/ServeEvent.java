@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2023 Thomas Akehurst
+ * Copyright (C) 2016-2024 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,13 +26,8 @@ import com.github.tomakehurst.wiremock.common.Timing;
 import com.github.tomakehurst.wiremock.extension.Parameters;
 import com.github.tomakehurst.wiremock.extension.PostServeActionDefinition;
 import com.github.tomakehurst.wiremock.extension.ServeEventListenerDefinition;
-import com.github.tomakehurst.wiremock.http.LoggedResponse;
-import com.github.tomakehurst.wiremock.http.Request;
-import com.github.tomakehurst.wiremock.http.Response;
-import com.github.tomakehurst.wiremock.http.ResponseDefinition;
+import com.github.tomakehurst.wiremock.http.*;
 import com.github.tomakehurst.wiremock.verification.LoggedRequest;
-import com.google.common.base.Function;
-import com.google.common.base.Predicate;
 import com.google.common.base.Stopwatch;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -128,6 +123,21 @@ public class ServeEvent {
         id, request, stubMapping, responseDefinition, response, false, timing, subEvents);
   }
 
+  public ServeEvent withPathParamDecoratedRequest() {
+    final LoggedRequest newLoggedRequest =
+        LoggedRequest.createFrom(
+            RequestPathParamsDecorator.decorate(request, stubMapping.getRequest()));
+    return new ServeEvent(
+        id, newLoggedRequest, stubMapping, responseDefinition, response, false, timing, subEvents);
+  }
+
+  public ServeEvent withIdDecoratedRequest() {
+    final LoggedRequest newLoggedRequest =
+        LoggedRequest.createFrom(new RequestIdDecorator(request, id));
+    return new ServeEvent(
+        id, newLoggedRequest, stubMapping, responseDefinition, response, false, timing, subEvents);
+  }
+
   public ServeEvent complete(Response response, DataTruncationSettings dataTruncationSettings) {
     timing.logProcessTime(stopwatch);
     timing.setAddedTime((int) response.getInitialDelay());
@@ -194,7 +204,17 @@ public class ServeEvent {
   }
 
   public void appendSubEvent(SubEvent subEvent) {
-    subEvents.add(subEvent);
+    if (hasNotAlreadyBeenAppended(subEvent)) {
+      subEvents.add(subEvent);
+    }
+  }
+
+  private boolean hasNotAlreadyBeenAppended(SubEvent subEvent) {
+    if (!subEvent.isStandardType()) {
+      return true;
+    }
+
+    return subEvents.stream().noneMatch(subEvent::isEquivalentStandardTypedEventTo);
   }
 
   @JsonIgnore
@@ -226,9 +246,4 @@ public class ServeEvent {
         ? stubMapping.getResponse().getTransformerParameters()
         : Parameters.empty();
   }
-
-  public static final Function<ServeEvent, LoggedRequest> TO_LOGGED_REQUEST =
-      ServeEvent::getRequest;
-
-  public static final Predicate<ServeEvent> NOT_MATCHED = ServeEvent::isNoExactMatch;
 }

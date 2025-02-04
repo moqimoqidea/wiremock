@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2023 Thomas Akehurst
+ * Copyright (C) 2018-2024 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,11 +17,10 @@ package com.github.tomakehurst.wiremock.extension.requestfilter;
 
 import static com.github.tomakehurst.wiremock.common.Encoding.encodeBase64;
 import static com.github.tomakehurst.wiremock.common.ParameterUtils.getFirstNonNull;
-import static org.apache.commons.lang3.StringUtils.countMatches;
-import static org.apache.commons.lang3.StringUtils.ordinalIndexOf;
+import static com.github.tomakehurst.wiremock.common.Strings.countMatches;
+import static com.github.tomakehurst.wiremock.common.Strings.ordinalIndexOf;
 
 import com.github.tomakehurst.wiremock.http.*;
-import com.google.common.collect.ImmutableMap;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -89,7 +88,7 @@ public class RequestWrapper implements Request {
   public String getUrl() {
     String absoluteUrl = getAbsoluteUrl();
     int relativeStartIndex =
-        countMatches(absoluteUrl, "/") >= 3
+        countMatches(absoluteUrl, '/') >= 3
             ? ordinalIndexOf(absoluteUrl, "/", 3)
             : absoluteUrl.length();
     return absoluteUrl.substring(relativeStartIndex);
@@ -170,7 +169,7 @@ public class RequestWrapper implements Request {
 
   @Override
   public boolean containsHeader(String key) {
-    return getHeaders().keys().contains(key);
+    return getHeaders().getHeader(key).isPresent();
   }
 
   @Override
@@ -180,7 +179,7 @@ public class RequestWrapper implements Request {
 
   @Override
   public Map<String, Cookie> getCookies() {
-    ImmutableMap.Builder<String, Cookie> builder = ImmutableMap.builder();
+    Map<String, Cookie> cookieMap = new HashMap<>();
     for (Map.Entry<String, Cookie> entry : delegate.getCookies().entrySet()) {
       Cookie newCookie =
           cookieTransformers.containsKey(entry.getKey())
@@ -188,13 +187,13 @@ public class RequestWrapper implements Request {
               : entry.getValue();
 
       if (!cookiesToRemove.contains(entry.getKey())) {
-        builder.put(entry.getKey(), newCookie);
+        cookieMap.put(entry.getKey(), newCookie);
       }
     }
 
-    builder.putAll(additionalCookies);
+    cookieMap.putAll(additionalCookies);
 
-    return builder.build();
+    return Collections.unmodifiableMap(cookieMap);
   }
 
   @Override

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Thomas Akehurst
+ * Copyright (C) 2023-2024 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,21 +20,29 @@ import static com.github.tomakehurst.wiremock.extension.ExtensionLoader.valueAss
 import static java.util.stream.Collectors.toMap;
 
 import com.github.jknack.handlebars.Helper;
+import com.github.tomakehurst.wiremock.common.Exceptions;
 import com.github.tomakehurst.wiremock.common.FileSource;
 import com.github.tomakehurst.wiremock.core.Admin;
 import com.github.tomakehurst.wiremock.core.Options;
+import com.github.tomakehurst.wiremock.extension.responsetemplating.LazyTemplateEngine;
 import com.github.tomakehurst.wiremock.extension.responsetemplating.ResponseTemplateTransformer;
 import com.github.tomakehurst.wiremock.extension.responsetemplating.TemplateEngine;
+import com.github.tomakehurst.wiremock.http.client.HttpClient;
+import com.github.tomakehurst.wiremock.http.client.HttpClientFactory;
+import com.github.tomakehurst.wiremock.http.client.LazyHttpClient;
+import com.github.tomakehurst.wiremock.http.client.LazyHttpClientFactory;
 import com.github.tomakehurst.wiremock.store.Stores;
-import com.google.common.collect.Maps;
-import com.google.common.collect.Streams;
 import java.util.*;
+import java.util.concurrent.Executors;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.wiremock.webhooks.WebhookTransformer;
+import org.wiremock.webhooks.Webhooks;
 
 public class Extensions implements WireMockServices {
 
-  public static Extensions NONE =
+  public static final Extensions NONE =
       new Extensions(new ExtensionDeclarations(), null, null, null, null);
 
   private final ExtensionDeclarations extensionDeclarations;
@@ -46,9 +54,10 @@ public class Extensions implements WireMockServices {
 
   private TemplateEngine templateEngine;
 
+  private HttpClientFactory httpClientFactory;
+
   private final Map<String, Extension> loadedExtensions;
 
-  @SuppressWarnings("unchecked")
   public Extensions(
       ExtensionDeclarations extensionDeclarations,
       Admin admin,
@@ -65,7 +74,7 @@ public class Extensions implements WireMockServices {
   }
 
   public void load() {
-    Streams.concat(
+    Stream.concat(
             extensionDeclarations.getClassNames().stream().map(Extensions::loadClass),
             extensionDeclarations.getClasses().stream())
         .map(Extensions::load)
@@ -80,12 +89,21 @@ public class Extensions implements WireMockServices {
 
     loadedExtensions.putAll(extensionDeclarations.getInstances());
 
-    loadedExtensions.putAll(
-        loadExtensionsAsServices().collect(toMap(Extension::getName, Function.identity())));
+    if (options.isExtensionScanningEnabled()) {
+      loadedExtensions.putAll(
+          loadExtensionsAsServices().collect(toMap(Extension::getName, Function.identity())));
+    }
 
+    final Stream<ExtensionFactory> declaredFactories =
+        Stream.concat(
+            extensionDeclarations.getFactories().stream(),
+            extensionDeclarations.getFactoryClasses().stream()
+                .map(Extensions::instantiateExtensionFactory));
     final Stream<ExtensionFactory> allFactories =
-        Streams.concat(
-            extensionDeclarations.getFactories().stream(), loadExtensionFactoriesAsServices());
+        options.isExtensionScanningEnabled()
+            ? Stream.concat(declaredFactories, loadExtensionFactoriesAsServices())
+            : declaredFactories;
+
     loadedExtensions.putAll(
         allFactories
             .map(factory -> factory.create(Extensions.this))
@@ -93,6 +111,8 @@ public class Extensions implements WireMockServices {
             .collect(toMap(Extension::getName, Function.identity())));
 
     configureTemplating();
+    configureHttpClient();
+    configureWebhooks();
   }
 
   private Stream<Extension> loadExtensionsAsServices() {
@@ -102,7 +122,7 @@ public class Extensions implements WireMockServices {
 
   private Stream<ExtensionFactory> loadExtensionFactoriesAsServices() {
     final ServiceLoader<ExtensionFactory> loader = ServiceLoader.load(ExtensionFactory.class);
-    return loader.stream().map(ServiceLoader.Provider::get);
+    return loader.stream().map(ServiceLoader.Provider::get).filter(ExtensionFactory::isLoadable);
   }
 
   private void configureTemplating() {
@@ -113,15 +133,16 @@ public class Extensions implements WireMockServices {
             .flatMap(Set::stream)
             .collect(toMap(Map.Entry::getKey, Map.Entry::getValue));
 
+    final List<TemplateModelDataProviderExtension> templateModelProviders =
+        new ArrayList<>(ofType(TemplateModelDataProviderExtension.class).values());
+
     templateEngine =
         new TemplateEngine(
             helpers,
             options.getMaxTemplateCacheEntries(),
             options.getTemplatePermittedSystemKeys(),
-            options.getTemplateEscapingDisabled());
-
-    final List<TemplateModelDataProviderExtension> templateModelProviders =
-        new ArrayList<>(ofType(TemplateModelDataProviderExtension.class).values());
+            options.getTemplateEscapingDisabled(),
+            templateModelProviders);
 
     if (options.getResponseTemplatingEnabled()) {
       final ResponseTemplateTransformer responseTemplateTransformer =
@@ -132,6 +153,24 @@ public class Extensions implements WireMockServices {
               templateModelProviders);
       loadedExtensions.put(responseTemplateTransformer.getName(), responseTemplateTransformer);
     }
+  }
+
+  private void configureHttpClient() {
+    httpClientFactory =
+        ofType(com.github.tomakehurst.wiremock.http.client.HttpClientFactory.class)
+            .values()
+            .stream()
+            .findFirst()
+            .orElse(options.httpClientFactory());
+  }
+
+  private void configureWebhooks() {
+    final List<WebhookTransformer> webhookTransformers =
+        ofType(WebhookTransformer.class).values().stream().collect(Collectors.toUnmodifiableList());
+
+    final Webhooks webhooks =
+        new Webhooks(this, Executors.newScheduledThreadPool(10), webhookTransformers);
+    loadedExtensions.put(webhooks.getName(), webhooks);
   }
 
   @Override
@@ -161,11 +200,26 @@ public class Extensions implements WireMockServices {
 
   @Override
   public TemplateEngine getTemplateEngine() {
-    return templateEngine;
+    return new LazyTemplateEngine(() -> templateEngine);
+  }
+
+  @Override
+  public HttpClientFactory getHttpClientFactory() {
+    return new LazyHttpClientFactory(() -> httpClientFactory);
+  }
+
+  @Override
+  public HttpClient getDefaultHttpClient() {
+    return new LazyHttpClient(
+        () -> httpClientFactory.buildHttpClient(options, true, Collections.emptyList(), true));
   }
 
   public int getCount() {
     return loadedExtensions.size();
+  }
+
+  public Set<String> getAllExtensionNames() {
+    return loadedExtensions.keySet();
   }
 
   @SuppressWarnings("unchecked")
@@ -185,9 +239,31 @@ public class Extensions implements WireMockServices {
     }
   }
 
+  public void startAll() {
+    loadedExtensions.values().forEach(Extension::start);
+  }
+
+  public void stopAll() {
+    loadedExtensions.values().forEach(Extension::stop);
+  }
+
   @SuppressWarnings("unchecked")
   public <T extends Extension> Map<String, T> ofType(Class<T> extensionType) {
     return (Map<String, T>)
-        Maps.filterEntries(loadedExtensions, valueAssignableFrom(extensionType)::test);
+        Collections.unmodifiableMap(
+            loadedExtensions.entrySet().stream()
+                .filter(valueAssignableFrom(extensionType))
+                .collect(
+                    Collectors.toMap(
+                        Map.Entry::getKey,
+                        Map.Entry::getValue,
+                        (entry1, entry2) -> entry1,
+                        LinkedHashMap::new)));
+  }
+
+  private static ExtensionFactory instantiateExtensionFactory(
+      Class<? extends ExtensionFactory> factoryClass) {
+    return Exceptions.uncheck(
+        () -> factoryClass.getDeclaredConstructor().newInstance(), ExtensionFactory.class);
   }
 }
