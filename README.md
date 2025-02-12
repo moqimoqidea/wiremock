@@ -10,11 +10,11 @@
 [![Docs](https://img.shields.io/static/v1?label=Documentation&message=public&color=green)](https://wiremock.org/docs/)
 [![a](https://img.shields.io/badge/slack-Join%20us-brightgreen?style=flat&logo=slack)](https://slack.wiremock.org/)
 [![Participate](https://img.shields.io/static/v1?label=Contributing&message=guide&color=orange)](./CONTRIBUTING.md)
-[![Maven Central](https://img.shields.io/maven-central/v/com.github.tomakehurst/wiremock-jre8.svg)](https://search.maven.org/artifact/com.github.tomakehurst/wiremock-jre8)
+[![Maven Central](https://img.shields.io/maven-central/v/org.wiremock/wiremock.svg)](https://search.maven.org/artifact/org.wiremock/wiremock)
 
 WireMock is a popular open-source tool for API mock testing with over 5 million downloads per month.
 It can help you to create stable test and development environments,
-isolate yourself from flakey 3rd parties and simulate APIs that don’t exist yet.
+isolate yourself from flaky 3rd parties and simulate APIs that don’t exist yet.
 
 Started in 2011 as a Java library by [Tom Akehurst](https://github.com/tomakehurst),
 now WireMock spans across multiple programming languages and technology stacks.

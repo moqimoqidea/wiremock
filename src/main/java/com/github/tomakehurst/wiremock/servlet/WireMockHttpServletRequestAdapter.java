@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2023 Thomas Akehurst
+ * Copyright (C) 2016-2024 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,19 +17,17 @@ package com.github.tomakehurst.wiremock.servlet;
 
 import static com.github.tomakehurst.wiremock.common.Encoding.encodeBase64;
 import static com.github.tomakehurst.wiremock.common.ParameterUtils.getFirstNonNull;
+import static com.github.tomakehurst.wiremock.common.Strings.isNullOrEmpty;
 import static com.github.tomakehurst.wiremock.common.Strings.stringFromBytes;
 import static com.github.tomakehurst.wiremock.common.Urls.splitQuery;
-import static com.google.common.base.Strings.isNullOrEmpty;
-import static com.google.common.io.ByteStreams.toByteArray;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Collections.list;
 
 import com.github.tomakehurst.wiremock.common.Gzip;
 import com.github.tomakehurst.wiremock.http.*;
 import com.github.tomakehurst.wiremock.http.multipart.PartParser;
-import com.github.tomakehurst.wiremock.jetty.JettyUtils;
+import com.github.tomakehurst.wiremock.jetty.JettyHttpUtils;
 import com.google.common.base.Suppliers;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.Maps;
 import jakarta.servlet.http.HttpServletRequest;
@@ -52,16 +50,19 @@ public class WireMockHttpServletRequestAdapter implements Request {
   private final Map<String, FormParameter> cachedFormParameters;
   private final boolean browserProxyingEnabled;
   private final String urlPrefixToRemove;
+  private final JettyHttpUtils utils;
   private Collection<Part> cachedMultiparts;
 
   public WireMockHttpServletRequestAdapter(
       HttpServletRequest request,
       MultipartRequestConfigurer multipartRequestConfigurer,
       String urlPrefixToRemove,
-      boolean browserProxyingEnabled) {
+      boolean browserProxyingEnabled,
+      JettyHttpUtils utils) {
     this.request = request;
     this.urlPrefixToRemove = urlPrefixToRemove;
     this.browserProxyingEnabled = browserProxyingEnabled;
+    this.utils = utils;
 
     cachedQueryParams = Suppliers.memoize(() -> splitQuery(request.getQueryString()));
 
@@ -120,7 +121,7 @@ public class WireMockHttpServletRequestAdapter implements Request {
   public String getClientIp() {
     String forwardedForHeader = this.getHeader("X-Forwarded-For");
 
-    if (forwardedForHeader != null && forwardedForHeader.length() > 0) {
+    if (forwardedForHeader != null && !forwardedForHeader.isEmpty()) {
       return forwardedForHeader;
     }
 
@@ -131,7 +132,7 @@ public class WireMockHttpServletRequestAdapter implements Request {
   public byte[] getBody() {
     if (cachedBody == null) {
       try {
-        byte[] body = toByteArray(request.getInputStream());
+        byte[] body = request.getInputStream().readAllBytes();
         boolean isGzipped = hasGzipEncoding() || Gzip.isGzipped(body);
         cachedBody = isGzipped ? Gzip.unGzip(body) : body;
       } catch (IOException ioe) {
@@ -243,7 +244,7 @@ public class WireMockHttpServletRequestAdapter implements Request {
     }
 
     return Maps.transformValues(
-        builder.build().asMap(), input -> new Cookie(null, ImmutableList.copyOf(input)));
+        builder.build().asMap(), input -> new Cookie(null, List.copyOf(input)));
   }
 
   @Override
@@ -265,16 +266,11 @@ public class WireMockHttpServletRequestAdapter implements Request {
   @Override
   public boolean isBrowserProxyRequest() {
     // Avoid the performance hit if browser proxying is disabled
-    if (!browserProxyingEnabled || !JettyUtils.isJetty()) {
+    if (!browserProxyingEnabled || !JettyHttpUtils.isJetty()) {
       return false;
     }
 
-    if (request instanceof org.eclipse.jetty.server.Request) {
-      org.eclipse.jetty.server.Request jettyRequest = (org.eclipse.jetty.server.Request) request;
-      return JettyUtils.uriIsAbsolute(jettyRequest);
-    }
-
-    return false;
+    return utils.isBrowserProxyRequest(request);
   }
 
   @Override
@@ -293,15 +289,12 @@ public class WireMockHttpServletRequestAdapter implements Request {
   @Override
   public boolean isMultipart() {
     String header = getHeader("Content-Type");
-    return (header != null && header.contains("multipart/"));
+    return (header != null && header.matches("(?i)^\\s*multipart/.*"));
   }
 
   @Override
   public Part getPart(final String name) {
-    if (name == null || name.length() == 0) {
-      return null;
-    }
-    if (cachedMultiparts == null && getParts() == null) {
+    if (isNullOrEmpty(name) || (cachedMultiparts == null && getParts() == null)) {
       return null;
     }
 

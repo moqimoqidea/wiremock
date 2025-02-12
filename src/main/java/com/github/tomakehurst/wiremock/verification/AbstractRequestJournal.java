@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2023 Thomas Akehurst
+ * Copyright (C) 2011-2024 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ import com.github.tomakehurst.wiremock.matching.StringValuePattern;
 import com.github.tomakehurst.wiremock.store.RequestJournalStore;
 import com.github.tomakehurst.wiremock.stubbing.ServeEvent;
 import com.github.tomakehurst.wiremock.stubbing.StubMapping;
-import com.google.common.collect.ImmutableList;
 import java.util.*;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
@@ -59,7 +58,10 @@ public abstract class AbstractRequestJournal implements RequestJournal {
 
   @Override
   public List<LoggedRequest> getRequestsMatching(RequestPattern requestPattern) {
-    return getRequests().filter(thatMatch(requestPattern, customMatchers)).collect(toList());
+    List<LoggedRequest> loggedRequests =
+        getRequests().filter(thatMatch(requestPattern, customMatchers)).collect(toList());
+    Collections.reverse(loggedRequests);
+    return loggedRequests;
   }
 
   @Override
@@ -80,7 +82,7 @@ public abstract class AbstractRequestJournal implements RequestJournal {
 
   @Override
   public List<ServeEvent> removeEventsMatching(RequestPattern requestPattern) {
-    return removeServeEvents(withRequestMatching(requestPattern));
+    return removeServeEvents(withRequestMatching(requestPattern, customMatchers));
   }
 
   @Override
@@ -101,7 +103,7 @@ public abstract class AbstractRequestJournal implements RequestJournal {
 
   @Override
   public List<ServeEvent> getAllServeEvents() {
-    return ImmutableList.copyOf(store.getAll().collect(toList())).reverse();
+    return store.getAll().collect(toList());
   }
 
   @Override

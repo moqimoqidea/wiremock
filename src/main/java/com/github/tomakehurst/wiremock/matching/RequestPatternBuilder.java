@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2023 Thomas Akehurst
+ * Copyright (C) 2016-2024 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -152,6 +152,11 @@ public class RequestPatternBuilder {
     return this;
   }
 
+  public RequestPatternBuilder withUrl(UrlPattern urlPattern) {
+    this.url = urlPattern;
+    return this;
+  }
+
   public RequestPatternBuilder withHeader(String key, StringValuePattern valuePattern) {
     headers.put(key, MultiValuePattern.of(valuePattern));
     return this;
@@ -189,6 +194,11 @@ public class RequestPatternBuilder {
 
   public RequestPatternBuilder withFormParam(String key, MultiValuePattern multiValuePattern) {
     formParams.put(key, multiValuePattern);
+    return this;
+  }
+
+  public RequestPatternBuilder withoutFormParam(String key) {
+    formParams.put(key, MultiValuePattern.absent());
     return this;
   }
 
@@ -241,8 +251,11 @@ public class RequestPatternBuilder {
   }
 
   public RequestPatternBuilder andMatching(String customRequestMatcherName, Parameters parameters) {
-    this.customMatcherDefinition =
-        new CustomMatcherDefinition(customRequestMatcherName, parameters);
+    return andMatching(new CustomMatcherDefinition(customRequestMatcherName, parameters));
+  }
+
+  public RequestPatternBuilder andMatching(CustomMatcherDefinition matcherDefinition) {
+    this.customMatcherDefinition = matcherDefinition;
     return this;
   }
 

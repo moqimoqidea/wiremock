@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2023 Thomas Akehurst
+ * Copyright (C) 2012-2024 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.github.tomakehurst.wiremock.common.Errors;
 import com.github.tomakehurst.wiremock.common.InvalidInputException;
 import com.github.tomakehurst.wiremock.common.Json;
-import com.google.common.collect.ImmutableSet;
 import java.util.*;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -87,7 +86,7 @@ public class Scenario {
   Scenario setState(String newState) {
     if (!getPossibleStates().contains(newState)) {
       throw new InvalidInputException(
-          Errors.single(11, "Scenario my-scenario does not support state " + newState));
+          Errors.single(11, "Scenario " + id + " does not support state " + newState));
     }
 
     return new Scenario(id, newState, stubMappings);
@@ -98,8 +97,8 @@ public class Scenario {
   }
 
   Scenario withStubMapping(StubMapping stubMapping) {
-    Set<StubMapping> newMappings =
-        ImmutableSet.<StubMapping>builder().addAll(stubMappings).add(stubMapping).build();
+    Set<StubMapping> newMappings = new LinkedHashSet<>(stubMappings);
+    newMappings.add(stubMapping);
 
     return new Scenario(id, state, newMappings);
   }

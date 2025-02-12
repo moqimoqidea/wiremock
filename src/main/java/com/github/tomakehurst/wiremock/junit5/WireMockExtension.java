@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2023 Thomas Akehurst
+ * Copyright (C) 2021-2024 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,9 @@ import org.junit.platform.commons.support.AnnotationSupport;
 /**
  * JUnit Jupiter extension that manages a WireMock server instance's lifecycle and configuration.
  *
- * <p>See http://wiremock.org/docs/junit-jupiter/ for full documentation.
+ * <p>See <a
+ * href="http://wiremock.org/docs/junit-jupiter/">http://wiremock.org/docs/junit-jupiter/</a> for
+ * full documentation.
  */
 public class WireMockExtension extends DslWrapper
     implements ParameterResolver,
@@ -113,12 +115,37 @@ public class WireMockExtension extends DslWrapper
   protected void onBeforeAll(WireMockRuntimeInfo wireMockRuntimeInfo) {}
 
   /**
+   * To be overridden in subclasses in order to run code immediately after per-class WireMock setup.
+   *
+   * @param extensionContext the current extension context; never {@code null}
+   * @param wireMockRuntimeInfo port numbers, base URLs and HTTPS info for the running WireMock
+   *     instance/
+   */
+  protected void onBeforeAll(
+      ExtensionContext extensionContext, WireMockRuntimeInfo wireMockRuntimeInfo) {
+    this.onBeforeAll(wireMockRuntimeInfo);
+  }
+
+  /**
    * To be overridden in subclasses in order to run code immediately after per-test WireMock setup.
    *
    * @param wireMockRuntimeInfo port numbers, base URLs and HTTPS info for the running WireMock
    *     instance/
    */
   protected void onBeforeEach(WireMockRuntimeInfo wireMockRuntimeInfo) {}
+
+  /**
+   * To be overridden in subclasses in order to run code immediately after per-test cleanup of
+   * WireMock and its associated resources.
+   *
+   * @param extensionContext the current extension context; never {@code null}
+   * @param wireMockRuntimeInfo port numbers, base URLs and HTTPS info for the running WireMock
+   *     instance/
+   */
+  protected void onBeforeEach(
+      ExtensionContext extensionContext, WireMockRuntimeInfo wireMockRuntimeInfo) {
+    this.onBeforeEach(wireMockRuntimeInfo);
+  }
 
   /**
    * To be overridden in subclasses in order to run code immediately after per-test cleanup of
@@ -133,10 +160,36 @@ public class WireMockExtension extends DslWrapper
    * To be overridden in subclasses in order to run code immediately after per-class cleanup of
    * WireMock.
    *
+   * @param extensionContext the current extension context; never {@code null}
+   * @param wireMockRuntimeInfo port numbers, base URLs and HTTPS info for the running WireMock
+   *     instance/
+   */
+  protected void onAfterEach(
+      ExtensionContext extensionContext, WireMockRuntimeInfo wireMockRuntimeInfo) {
+    this.onAfterEach(wireMockRuntimeInfo);
+  }
+
+  /**
+   * To be overridden in subclasses in order to run code immediately after per-class cleanup of
+   * WireMock.
+   *
    * @param wireMockRuntimeInfo port numbers, base URLs and HTTPS info for the running WireMock
    *     instance/
    */
   protected void onAfterAll(WireMockRuntimeInfo wireMockRuntimeInfo) {}
+
+  /**
+   * To be overridden in subclasses in order to run code immediately after per-class cleanup of
+   * WireMock.
+   *
+   * @param extensionContext the current extension context; never {@code null}
+   * @param wireMockRuntimeInfo port numbers, base URLs and HTTPS info for the running WireMock
+   *     instance/
+   */
+  protected void onAfterAll(
+      ExtensionContext extensionContext, WireMockRuntimeInfo wireMockRuntimeInfo) {
+    this.onAfterAll(wireMockRuntimeInfo);
+  }
 
   @Override
   public boolean supportsParameter(
@@ -181,7 +234,7 @@ public class WireMockExtension extends DslWrapper
               .flatMap(
                   annotatedElement ->
                       AnnotationSupport.findAnnotation(annotatedElement, WireMockTest.class))
-              .<Boolean>map(WireMockTest::proxyMode)
+              .map(WireMockTest::proxyMode)
               .orElse(false);
     }
   }
@@ -196,13 +249,14 @@ public class WireMockExtension extends DslWrapper
                     ? AnnotationSupport.findAnnotation(annotatedElement, WireMockTest.class)
                     : Optional.empty())
         .map(this::buildOptionsFromWireMockTestAnnotation)
-        .orElse(Optional.ofNullable(this.options).orElse(defaultOptions));
+        .orElseGet(() -> Optional.ofNullable(this.options).orElse(defaultOptions));
   }
 
   private Options buildOptionsFromWireMockTestAnnotation(WireMockTest annotation) {
     WireMockConfiguration options =
         WireMockConfiguration.options()
             .port(annotation.httpPort())
+            .extensionScanningEnabled(annotation.extensionScanningEnabled())
             .enableBrowserProxying(annotation.proxyMode());
 
     if (annotation.httpsEnabled()) {
@@ -213,7 +267,7 @@ public class WireMockExtension extends DslWrapper
   }
 
   private void stopServerIfRunning() {
-    if (wireMockServer.isRunning()) {
+    if (wireMockServer != null && wireMockServer.isRunning()) {
       wireMockServer.stop();
     }
   }
@@ -228,7 +282,7 @@ public class WireMockExtension extends DslWrapper
     startServerIfRequired(context);
     setAdditionalOptions(context);
 
-    onBeforeAll(runtimeInfo);
+    onBeforeAll(context, runtimeInfo);
   }
 
   @Override
@@ -246,14 +300,14 @@ public class WireMockExtension extends DslWrapper
       JvmProxyConfigurer.configureFor(wireMockServer);
     }
 
-    onBeforeEach(runtimeInfo);
+    onBeforeEach(context, runtimeInfo);
   }
 
   @Override
   public final void afterAll(ExtensionContext context) throws Exception {
     stopServerIfRunning();
 
-    onAfterAll(runtimeInfo);
+    onAfterAll(context, runtimeInfo);
   }
 
   @Override
@@ -270,7 +324,7 @@ public class WireMockExtension extends DslWrapper
       JvmProxyConfigurer.restorePrevious();
     }
 
-    onAfterEach(runtimeInfo);
+    onAfterEach(context, runtimeInfo);
   }
 
   public WireMockRuntimeInfo getRuntimeInfo() {

@@ -16,22 +16,18 @@
 package com.github.tomakehurst.wiremock.common;
 
 import static com.github.tomakehurst.wiremock.common.Exceptions.throwUnchecked;
-import static com.github.tomakehurst.wiremock.common.ParameterUtils.getFirstNonNull;
-import static java.lang.Thread.currentThread;
+import static com.github.tomakehurst.wiremock.common.ResourceUtil.getLoader;
+import static com.github.tomakehurst.wiremock.common.ResourceUtil.getResourceURI;
 import static java.util.Arrays.asList;
 
-import com.google.common.collect.Iterators;
-import com.google.common.io.Resources;
 import java.io.File;
 import java.net.URI;
-import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
-import java.util.stream.StreamSupport;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -85,8 +81,7 @@ public class ClasspathFileSource implements FileSource {
 
   private ClassLoader getClassLoader() {
     if (classLoader != null) return classLoader;
-    return getFirstNonNull(
-        currentThread().getContextClassLoader(), Resources.class.getClassLoader());
+    return getLoader(ClasspathFileSource.class);
   }
 
   private boolean isFileSystem() {
@@ -153,22 +148,18 @@ public class ClasspathFileSource implements FileSource {
       return toTextFileList(fileList);
     }
 
-    return StreamSupport.stream(toIterable(zipFile.entries()).spliterator(), false)
+    return zipFile.stream()
         .filter(jarEntry -> !jarEntry.isDirectory() && jarEntry.getName().startsWith(path))
         .map(jarEntry -> new TextFile(getUriFor(jarEntry)))
         .collect(Collectors.toList());
   }
 
   private URI getUriFor(ZipEntry jarEntry) {
-    try {
-      return Resources.getResource(jarEntry.getName()).toURI();
-    } catch (URISyntaxException e) {
-      return throwUnchecked(e, URI.class);
-    }
+    return getResourceURI(ClasspathFileSource.class, jarEntry.getName());
   }
 
   private void recursivelyAddFilesToList(File root, List<File> fileList) {
-    File[] files = Optional.ofNullable(root.listFiles()).orElse(new File[0]);
+    File[] files = Optional.ofNullable(root.listFiles()).orElseGet(() -> new File[0]);
     for (File file : files) {
       if (file.isDirectory()) {
         recursivelyAddFilesToList(file, fileList);
@@ -196,10 +187,6 @@ public class ClasspathFileSource implements FileSource {
 
   @Override
   public void deleteFile(String name) {}
-
-  private static <T> Iterable<T> toIterable(final Enumeration<T> e) {
-    return () -> Iterators.forEnumeration(e);
-  }
 
   private void assertExistsAndIsDirectory() {
     if (rootDirectory.exists() && !rootDirectory.isDirectory()) {

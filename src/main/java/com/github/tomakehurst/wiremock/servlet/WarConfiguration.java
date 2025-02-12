@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2023 Thomas Akehurst
+ * Copyright (C) 2016-2024 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,8 @@ import com.github.tomakehurst.wiremock.extension.ExtensionDeclarations;
 import com.github.tomakehurst.wiremock.http.CaseInsensitiveKey;
 import com.github.tomakehurst.wiremock.http.HttpServerFactory;
 import com.github.tomakehurst.wiremock.http.ThreadPoolFactory;
+import com.github.tomakehurst.wiremock.http.client.ApacheHttpClientFactory;
+import com.github.tomakehurst.wiremock.http.client.HttpClientFactory;
 import com.github.tomakehurst.wiremock.http.trafficlistener.DoNothingWiremockNetworkTrafficListener;
 import com.github.tomakehurst.wiremock.http.trafficlistener.WiremockNetworkTrafficListener;
 import com.github.tomakehurst.wiremock.security.Authenticator;
@@ -56,6 +58,16 @@ public class WarConfiguration implements Options {
 
   @Override
   public boolean getHttpDisabled() {
+    return false;
+  }
+
+  @Override
+  public boolean getHttp2PlainDisabled() {
+    return false;
+  }
+
+  @Override
+  public boolean getHttp2TlsDisabled() {
     return false;
   }
 
@@ -145,6 +157,11 @@ public class WarConfiguration implements Options {
   }
 
   @Override
+  public boolean shouldPreserveUserAgentProxyHeader() {
+    return false;
+  }
+
+  @Override
   public String proxyHostHeader() {
     return null;
   }
@@ -155,6 +172,16 @@ public class WarConfiguration implements Options {
   }
 
   @Override
+  public boolean hasDefaultHttpServerFactory() {
+    return false;
+  }
+
+  @Override
+  public HttpClientFactory httpClientFactory() {
+    return new ApacheHttpClientFactory();
+  }
+
+  @Override
   public ThreadPoolFactory threadPoolFactory() {
     return null;
   }
@@ -162,6 +189,11 @@ public class WarConfiguration implements Options {
   @Override
   public ExtensionDeclarations getDeclaredExtensions() {
     return new ExtensionDeclarations();
+  }
+
+  @Override
+  public boolean isExtensionScanningEnabled() {
+    return true;
   }
 
   @Override
@@ -240,6 +272,16 @@ public class WarConfiguration implements Options {
   }
 
   @Override
+  public int getMaxHttpClientConnections() {
+    return DEFAULT_MAX_HTTP_CONNECTIONS;
+  }
+
+  @Override
+  public boolean getDisableConnectionReuse() {
+    return DEFAULT_DISABLE_CONNECTION_REUSE;
+  }
+
+  @Override
   public boolean getResponseTemplatingEnabled() {
     return true;
   }
@@ -262,5 +304,10 @@ public class WarConfiguration implements Options {
   @Override
   public boolean getTemplateEscapingDisabled() {
     return false;
+  }
+
+  @Override
+  public Set<String> getSupportedProxyEncodings() {
+    return null;
   }
 }

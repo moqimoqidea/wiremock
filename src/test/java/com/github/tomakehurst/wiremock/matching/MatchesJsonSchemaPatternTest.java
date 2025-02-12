@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Thomas Akehurst
+ * Copyright (C) 2023-2024 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,16 +24,22 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
 
 import com.github.tomakehurst.wiremock.client.WireMock;
+import com.github.tomakehurst.wiremock.common.Errors;
 import com.github.tomakehurst.wiremock.common.Json;
+import com.github.tomakehurst.wiremock.stubbing.SubEvent;
 import com.jayway.jsonpath.JsonPath;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
+import org.hamcrest.Description;
+import org.hamcrest.TypeSafeMatcher;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 public class MatchesJsonSchemaPatternTest {
 
@@ -92,7 +98,7 @@ public class MatchesJsonSchemaPatternTest {
   }
 
   @Test
-  void deserialisesFromJsonCorrectlyWithDefaultSchemaVersion() {
+  void deserialisesFromJsonStringCorrectlyWithDefaultSchemaVersion() {
     String schemaJson =
         "{\n"
             + "    \"required\": [\n"
@@ -114,13 +120,14 @@ public class MatchesJsonSchemaPatternTest {
 
     String matcherJson = "{\n" + "  \"matchesJsonSchema\": " + stringify(schemaJson) + "\n" + "}";
 
-    MatchesJsonSchemaPattern pattern = Json.read(matcherJson, MatchesJsonSchemaPattern.class);
+    StringValuePattern pattern = Json.read(matcherJson, StringValuePattern.class);
 
-    assertThat(pattern.getMatchesJsonSchema(), jsonEquals(schemaJson));
+    assertThat(pattern, instanceOf(MatchesJsonSchemaPattern.class));
+    assertThat(((MatchesJsonSchemaPattern) pattern).getMatchesJsonSchema(), jsonEquals(schemaJson));
   }
 
   @Test
-  void deserialisesFromJsonCorrectlyWithProvidedSchemaVersion() {
+  void deserialisesFromJsonStringCorrectlyWithProvidedSchemaVersion() {
     String schemaJson =
         "{\n"
             + "    \"properties\": {\n"
@@ -138,9 +145,66 @@ public class MatchesJsonSchemaPatternTest {
             + "  \"schemaVersion\": \"V6\"\n"
             + "}";
 
-    MatchesJsonSchemaPattern pattern = Json.read(matcherJson, MatchesJsonSchemaPattern.class);
+    StringValuePattern pattern = Json.read(matcherJson, StringValuePattern.class);
 
-    assertThat(pattern.getSchemaVersion(), is(V6));
+    assertThat(pattern, instanceOf(MatchesJsonSchemaPattern.class));
+    assertThat(((MatchesJsonSchemaPattern) pattern).getMatchesJsonSchema(), jsonEquals(schemaJson));
+    assertThat(((MatchesJsonSchemaPattern) pattern).getSchemaVersion(), is(V6));
+  }
+
+  @Test
+  void deserialisesFromJsonValueCorrectlyWithDefaultSchemaVersion() {
+    String schemaJson =
+        "{\n"
+            + "    \"required\": [\n"
+            + "      \"itemCatalogueId\",\n"
+            + "      \"quantity\"\n"
+            + "    ],\n"
+            + "    \"properties\": {\n"
+            + "      \"itemCatalogueId\": {\n"
+            + "        \"type\": \"string\"\n"
+            + "      },\n"
+            + "      \"quantity\": {\n"
+            + "        \"type\": \"integer\"\n"
+            + "      },\n"
+            + "      \"fastDelivery\": {\n"
+            + "        \"type\": \"boolean\"\n"
+            + "      }\n"
+            + "    }\n"
+            + "  }";
+
+    String matcherJson = "{\n" + "  \"matchesJsonSchema\": " + schemaJson + "\n" + "}";
+
+    StringValuePattern pattern = Json.read(matcherJson, StringValuePattern.class);
+
+    assertThat(pattern, instanceOf(MatchesJsonSchemaPattern.class));
+    assertThat(((MatchesJsonSchemaPattern) pattern).getMatchesJsonSchema(), jsonEquals(schemaJson));
+  }
+
+  @Test
+  void deserialisesFromJsonValueCorrectlyWithProvidedSchemaVersion() {
+    String schemaJson =
+        "{\n"
+            + "    \"properties\": {\n"
+            + "      \"itemCatalogueId\": {\n"
+            + "        \"type\": \"string\"\n"
+            + "      }\n"
+            + "    }\n"
+            + "  }";
+
+    String matcherJson =
+        "{\n"
+            + "  \"matchesJsonSchema\": "
+            + schemaJson
+            + ",\n"
+            + "  \"schemaVersion\": \"V6\"\n"
+            + "}";
+
+    StringValuePattern pattern = Json.read(matcherJson, StringValuePattern.class);
+
+    assertThat(pattern, instanceOf(MatchesJsonSchemaPattern.class));
+    assertThat(((MatchesJsonSchemaPattern) pattern).getMatchesJsonSchema(), jsonEquals(schemaJson));
+    assertThat(((MatchesJsonSchemaPattern) pattern).getSchemaVersion(), is(V6));
   }
 
   private static final StringValuePattern stringSchema =
@@ -155,7 +219,13 @@ public class MatchesJsonSchemaPatternTest {
   }
 
   private static Stream<Arguments> validStrings() {
-    return Stream.of(Arguments.of("\"12\""), Arguments.of("\"123\""), Arguments.of("\"1234\""));
+    return Stream.of(
+        Arguments.of("\"12\""),
+        Arguments.of("\"123\""),
+        Arguments.of("\"1234\""),
+        Arguments.of("12"),
+        Arguments.of("123"),
+        Arguments.of("1234"));
   }
 
   @ParameterizedTest
@@ -173,9 +243,8 @@ public class MatchesJsonSchemaPatternTest {
         Arguments.of("\"\""),
         Arguments.of("\"1\""),
         Arguments.of("\"12345\""),
-        Arguments.of("12"),
-        Arguments.of("123"),
-        Arguments.of("1234"));
+        Arguments.of("1"),
+        Arguments.of("12345"));
   }
 
   @ParameterizedTest
@@ -272,7 +341,7 @@ public class MatchesJsonSchemaPatternTest {
   }
 
   @Test
-  void corercesNumericActualValueToJsonString() {
+  void coercesNumericActualValueToJsonString() {
     String schema = file("schema-validation/stringy.schema.json");
 
     MatchesJsonSchemaPattern pattern =
@@ -281,7 +350,9 @@ public class MatchesJsonSchemaPatternTest {
     assertThat(pattern.match("abcd").isExactMatch(), is(true));
     assertThat(pattern.match("abcde").isExactMatch(), is(true));
     assertThat(pattern.match("abcdef").isExactMatch(), is(false));
-    assertThat(pattern.match("0").isExactMatch(), is(false));
+    assertThat(pattern.match("1").isExactMatch(), is(true));
+    assertThat(pattern.match("12345").isExactMatch(), is(true));
+    assertThat(pattern.match("123456").isExactMatch(), is(false));
   }
 
   private static Stream<Arguments> recursiveSchemaNonMatchingExamples() {
@@ -291,6 +362,82 @@ public class MatchesJsonSchemaPatternTest {
         Arguments.of("{ \"name\": \"invalid_child\", \"children\": [{}] }"),
         Arguments.of(
             "{ \"name\": \"invalid_grandchild\", \"children\": [{ \"name\": \"invalid_child\", \"children\": [{}] }] }"));
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "{\"id\": 1, \"name\": \"alice\"}",
+        "{\"type\": \"array\", \"items\": {\"$ref\": \"#/does/not/exist\"}}",
+      })
+  void invalidJsonSchemaNeverMatches(String schema) {
+    MatchesJsonSchemaPattern pattern = new MatchesJsonSchemaPattern(schema);
+
+    assertThat(pattern.match("{\"field\":\"value\"}").isExactMatch(), is(false));
+    assertThat(pattern.match("\"json string\"").isExactMatch(), is(false));
+    assertThat(pattern.match("{\"id\":1,\"name\":\"alice\"}").isExactMatch(), is(false));
+    assertThat(pattern.match("[{\"id\":1,\"name\":\"alice\"}]").isExactMatch(), is(false));
+  }
+
+  @Test
+  void invalidJsonSchemaMatchResultsContainExplanatorySubEvent() {
+    class SubEventMatcher extends TypeSafeMatcher<SubEvent> {
+
+      private final Map<String, Object> expectedData;
+
+      SubEventMatcher(Errors expectedData) {
+        this.expectedData = Json.objectToMap(expectedData);
+      }
+
+      @Override
+      protected boolean matchesSafely(SubEvent item) {
+        return item.getType().equals(SubEvent.ERROR) && item.getData().equals(expectedData);
+      }
+
+      @Override
+      public void describeTo(Description description) {
+        description.appendText(
+            "a sub event of type " + SubEvent.ERROR + " with data " + expectedData);
+      }
+    }
+
+    MatchResult matchResult1 =
+        new MatchesJsonSchemaPattern("{\"id\":1,\"name\":\"alice\"}")
+            .match("{\"field\":\"value\"}");
+    assertThat(matchResult1.isExactMatch(), is(false));
+    Errors expectedErrors1 =
+        Errors.singleWithDetail(10, "Invalid JSON Schema", "No suitable validator for id");
+    assertThat(matchResult1.getSubEvents(), contains(new SubEventMatcher(expectedErrors1)));
+
+    MatchResult matchResult2 =
+        new MatchesJsonSchemaPattern(
+                "{\"type\": \"array\", \"items\": {\"$ref\": \"#/does/not/exist\"}}")
+            .match("[{\"id\":1,\"name\":\"alice\"}]");
+    assertThat(matchResult2.isExactMatch(), is(false));
+    Errors expectedErrors2 =
+        Errors.singleWithDetail(
+            10, "Invalid JSON Schema", ": Reference /does/not/exist cannot be resolved");
+    assertThat(matchResult2.getSubEvents(), contains(new SubEventMatcher(expectedErrors2)));
+
+    // Check for false positives.
+    MatchResult matchResult3 =
+        new MatchesJsonSchemaPattern("{\"type\": \"string\"}").match("\"my value\"");
+    assertThat(matchResult3.isExactMatch(), is(true));
+    assertThat(
+        matchResult3.getSubEvents(),
+        not(
+            contains(
+                new TypeSafeMatcher<>() {
+                  @Override
+                  protected boolean matchesSafely(SubEvent item) {
+                    return item.getType().equals(SubEvent.ERROR);
+                  }
+
+                  @Override
+                  public void describeTo(Description description) {
+                    description.appendText("a sub event of type " + SubEvent.ERROR);
+                  }
+                })));
   }
 
   private static String stringify(String json) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2023 Thomas Akehurst
+ * Copyright (C) 2011-2024 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ package com.github.tomakehurst.wiremock.client;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.common.ParameterUtils.checkParameter;
+import static com.github.tomakehurst.wiremock.common.ParameterUtils.checkState;
 import static com.github.tomakehurst.wiremock.common.ParameterUtils.getFirstNonNull;
 
 import com.github.tomakehurst.wiremock.common.Metadata;
@@ -27,14 +28,7 @@ import com.github.tomakehurst.wiremock.extension.ServeEventListenerDefinition;
 import com.github.tomakehurst.wiremock.http.Request;
 import com.github.tomakehurst.wiremock.http.RequestMethod;
 import com.github.tomakehurst.wiremock.http.ResponseDefinition;
-import com.github.tomakehurst.wiremock.matching.ContentPattern;
-import com.github.tomakehurst.wiremock.matching.MultiValuePattern;
-import com.github.tomakehurst.wiremock.matching.MultipartValuePatternBuilder;
-import com.github.tomakehurst.wiremock.matching.RequestPattern;
-import com.github.tomakehurst.wiremock.matching.RequestPatternBuilder;
-import com.github.tomakehurst.wiremock.matching.StringValuePattern;
-import com.github.tomakehurst.wiremock.matching.UrlPattern;
-import com.github.tomakehurst.wiremock.matching.ValueMatcher;
+import com.github.tomakehurst.wiremock.matching.*;
 import com.github.tomakehurst.wiremock.stubbing.StubMapping;
 import java.util.ArrayList;
 import java.util.List;
@@ -282,11 +276,20 @@ class BasicMappingBuilder implements ScenarioMappingBuilder {
   }
 
   @Override
+  public BasicMappingBuilder andMatching(CustomMatcherDefinition matcherDefinition) {
+    requestPatternBuilder.andMatching(matcherDefinition);
+    return this;
+  }
+
+  private boolean requiredScenarioExist() {
+    return scenarioName == null && (requiredScenarioState != null || newScenarioState != null);
+  }
+
+  @Override
   public StubMapping build() {
-    if (scenarioName == null && (requiredScenarioState != null || newScenarioState != null)) {
-      throw new IllegalStateException(
-          "Scenario name must be specified to require or set a new scenario state");
-    }
+    checkState(
+        !requiredScenarioExist(),
+        "Scenario name must be specified to require or set a new scenario state");
     RequestPattern requestPattern = requestPatternBuilder.build();
     ResponseDefinition response = getFirstNonNull(responseDefBuilder, aResponse()).build();
     StubMapping mapping = new StubMapping(requestPattern, response);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2023 Thomas Akehurst
+ * Copyright (C) 2016-2024 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ public class AdminRoutes {
   private final Stores stores;
 
   public static AdminRoutes forClient() {
-    return new AdminRoutes(Collections.<AdminApiExtension>emptyList(), null);
+    return new AdminRoutes(Collections.emptyList(), null);
   }
 
   public static AdminRoutes forServer(Iterable<AdminApiExtension> apiExtensions, Stores stores) {
@@ -59,14 +59,15 @@ public class AdminRoutes {
     router.add(POST, "/mappings", new CreateStubMappingTask());
     router.add(DELETE, "/mappings", new ResetStubMappingsTask());
 
-    router.add(POST, "/mappings/new", new OldCreateStubMappingTask()); // Deprecated
-    router.add(POST, "/mappings/remove", new OldRemoveStubMappingTask()); // Deprecated
-    router.add(POST, "/mappings/edit", new OldEditStubMappingTask()); // Deprecated
+    // Deprecated but kept so that 2.x client will still be compatible
+    router.add(POST, "/mappings/edit", new OldEditStubMappingTask());
+
     router.add(POST, "/mappings/save", new SaveMappingsTask());
     router.add(POST, "/mappings/reset", new ResetToDefaultMappingsTask());
     router.add(GET, "/mappings/{id}", new GetStubMappingTask());
     router.add(PUT, "/mappings/{id}", new EditStubMappingTask());
-    router.add(DELETE, "/mappings/{id}", new RemoveStubMappingTask());
+    router.add(POST, "/mappings/remove", new RemoveMatchingStubMappingTask());
+    router.add(DELETE, "/mappings/{id}", new RemoveStubMappingByIdTask());
     router.add(POST, "/mappings/find-by-metadata", new FindStubMappingsByMetadataTask());
     router.add(POST, "/mappings/remove-by-metadata", new RemoveStubMappingsByMetadataTask());
     router.add(POST, "/mappings/import", new ImportStubMappingsTask());
@@ -74,6 +75,7 @@ public class AdminRoutes {
     router.add(GET, "/files", new GetAllStubFilesTask(stores));
     router.add(PUT, "/files/**", new EditStubFileTask(stores));
     router.add(DELETE, "/files/**", new DeleteStubFileTask(stores));
+    router.add(GET, "/files/**", new GetStubFileTask(stores));
 
     router.add(GET, "/scenarios", new GetAllScenariosTask());
     router.add(POST, "/scenarios/reset", new ResetScenariosTask());
@@ -81,7 +83,6 @@ public class AdminRoutes {
 
     router.add(GET, "/requests", new GetAllRequestsTask());
     router.add(DELETE, "/requests", new ResetRequestsTask());
-    router.add(POST, "/requests/reset", new OldResetRequestsTask()); // Deprecated
     router.add(POST, "/requests/count", new GetRequestCountTask());
     router.add(POST, "/requests/find", new FindRequestsTask());
     router.add(GET, "/requests/unmatched", new FindUnmatchedRequestsTask());
@@ -111,6 +112,10 @@ public class AdminRoutes {
     router.add(GET, "/docs", new GetDocIndexTask());
 
     router.add(GET, "/certs/wiremock-ca.crt", new GetCaCertTask());
+
+    router.add(GET, "/health", new HealthCheckTask());
+
+    router.add(GET, "/version", new GetVersionTask());
   }
 
   protected void initAdditionalRoutes(Router routeBuilder) {
@@ -124,7 +129,7 @@ public class AdminRoutes {
         .filter(entry -> entry.getKey().matches(method, path))
         .map(Entry::getValue)
         .findFirst()
-        .orElse(new NotFoundAdminTask());
+        .orElseGet(NotFoundAdminTask::new);
   }
 
   public RequestSpec requestSpecForTask(final Class<? extends AdminTask> taskClass) {

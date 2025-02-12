@@ -15,23 +15,22 @@
  */
 package com.github.tomakehurst.wiremock.standalone;
 
-import com.github.tomakehurst.wiremock.WireMockServer;
-import com.github.tomakehurst.wiremock.common.FatalStartupException;
-import com.github.tomakehurst.wiremock.common.FileSource;
-import com.github.tomakehurst.wiremock.http.ResponseDefinition;
-import com.github.tomakehurst.wiremock.matching.RequestPattern;
-import com.github.tomakehurst.wiremock.stubbing.StubMapping;
-
-import java.io.PrintStream;
-
 import static com.github.tomakehurst.wiremock.client.ResponseDefinitionBuilder.responseDefinition;
 import static com.github.tomakehurst.wiremock.client.WireMock.anyUrl;
 import static com.github.tomakehurst.wiremock.core.WireMockApp.FILES_ROOT;
 import static com.github.tomakehurst.wiremock.core.WireMockApp.MAPPINGS_ROOT;
 import static com.github.tomakehurst.wiremock.http.RequestMethod.ANY;
 import static com.github.tomakehurst.wiremock.matching.RequestPatternBuilder.newRequestPattern;
-import static java.lang.System.err;
 import static java.lang.System.out;
+
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.common.FatalStartupException;
+import com.github.tomakehurst.wiremock.common.FileSource;
+import com.github.tomakehurst.wiremock.core.Version;
+import com.github.tomakehurst.wiremock.http.ResponseDefinition;
+import com.github.tomakehurst.wiremock.matching.RequestPattern;
+import com.github.tomakehurst.wiremock.stubbing.StubMapping;
+import java.util.Set;
 
 public class WireMockServerRunner {
 
@@ -52,11 +51,13 @@ public class WireMockServerRunner {
   private WireMockServer wireMockServer;
 
   public void run(String... args) {
-    suppressSlf4jWarnings();
-
     CommandLineOptions options = new CommandLineOptions(args);
     if (options.help()) {
       out.println(options.helpText());
+      return;
+    }
+    if (options.version()) {
+      out.println(Version.getCurrentVersion());
       return;
     }
 
@@ -97,35 +98,16 @@ public class WireMockServerRunner {
         out.println("The WireMock server is started .....");
       }
       out.println(options);
+
+      final Set<String> loadedExtensionNames = wireMockServer.getLoadedExtensionNames();
+      if (!loadedExtensionNames.isEmpty()) {
+        out.println("extensions:                   " + String.join(",", loadedExtensionNames));
+      }
+
     } catch (FatalStartupException e) {
       System.err.println(e.getMessage());
       System.exit(1);
     }
-  }
-
-  private static void suppressSlf4jWarnings() {
-    System.setErr(new PrintStream(err) {
-      @Override
-      public void println(String s) {
-        if (!s.startsWith("SLF4J")) {
-          super.println(s);
-        }
-      }
-
-      @Override
-      public void println(char[] chars) {
-        if (!new String(chars).startsWith("SLF4J")) {
-          super.println(chars);
-        }
-      }
-
-      @Override
-      public void println(Object o) {
-        if (!o.toString().startsWith("SLF4J")) {
-          super.println(o);
-        }
-      }
-    });
   }
 
   private void addProxyMapping(final String baseUrl) {

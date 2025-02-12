@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2023 Thomas Akehurst
+ * Copyright (C) 2011-2024 Thomas Akehurst
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,11 @@
 package com.github.tomakehurst.wiremock.common;
 
 import static com.github.tomakehurst.wiremock.common.Exceptions.throwUnchecked;
+import static com.github.tomakehurst.wiremock.common.Strings.ordinalIndexOf;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME;
 
 import com.github.tomakehurst.wiremock.http.QueryParameter;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ImmutableListMultimap.Builder;
 import com.google.common.collect.Maps;
@@ -27,10 +28,8 @@ import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLDecoder;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
+import java.time.format.DateTimeParseException;
+import java.util.*;
 import java.util.stream.Collectors;
 
 public class Urls {
@@ -71,16 +70,23 @@ public class Urls {
     }
 
     return Maps.transformEntries(
-        builder.build().asMap(),
-        (key, values) -> new QueryParameter(key, ImmutableList.copyOf(values)));
+        builder.build().asMap(), (key, values) -> new QueryParameter(key, new ArrayList<>(values)));
   }
 
   public static String getPath(String url) {
     return url.contains("?") ? url.substring(0, url.indexOf("?")) : url;
   }
 
+  public static String getPathAndQuery(String url) {
+    return isAbsolute(url) ? url.substring(ordinalIndexOf(url, "/", 3)) : url;
+  }
+
+  private static boolean isAbsolute(String url) {
+    return url.matches("^https?:\\/\\/.*");
+  }
+
   public static List<String> getPathSegments(String path) {
-    return ImmutableList.copyOf(path.split("/"));
+    return List.of(path.split("/"));
   }
 
   public static String urlToPathParts(URI uri) {
@@ -93,8 +99,20 @@ public class Urls {
     return nodeCount > 0 ? String.join("-", uriPathNodes) : "";
   }
 
-  public static String decode(String encoded) {
-    return URLDecoder.decode(encoded, UTF_8);
+  private static String decode(String encoded) {
+    if (!isISOOffsetDateTime(encoded)) {
+      return URLDecoder.decode(encoded, UTF_8);
+    }
+    return encoded;
+  }
+
+  private static boolean isISOOffsetDateTime(String encoded) {
+    try {
+      ISO_OFFSET_DATE_TIME.parse(encoded);
+    } catch (DateTimeParseException e) {
+      return false;
+    }
+    return true;
   }
 
   public static URL safelyCreateURL(String url) {
@@ -106,6 +124,7 @@ public class Urls {
   }
 
   // Workaround for a Jetty bug that appends "null" onto the end of the URL
+
   private static String clean(String url) {
     return url.matches(".*:[0-9]+null$") ? url.substring(0, url.length() - 4) : url;
   }
